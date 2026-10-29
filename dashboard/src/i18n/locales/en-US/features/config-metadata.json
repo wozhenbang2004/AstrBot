@@ -1012,7 +1012,7 @@
       },
       "wake_prefix": {
         "description": "Wake Word",
-        "hint": "A list of message prefixes that wake the bot. You can also wake it by mentioning it."
+        "hint": "Message prefixes that wake the bot and also apply to built-in commands. Keep / to continue using commands such as /sid; if you replace / with !, use !sid instead. You can also wake the bot by mentioning it."
       },
       "disable_builtin_commands": {
         "description": "Disable Built-in Commands",

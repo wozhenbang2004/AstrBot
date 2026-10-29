@@ -557,7 +557,9 @@ When enabled, AstrBot sends a pre-reply emoji before requesting the LLM to infor
 
 ### `wake_prefix`
 
-Wake prefix. Default is `/`. When a message starts with `/`, AstrBot is awakened.
+A list of wake prefixes. The default is `["/"]`. AstrBot is awakened when a message starts with a prefix in this list.
+
+These prefixes also apply to built-in commands. Keep `/` to continue using commands such as `/sid`; if you replace `/` with `!`, use `!sid` instead. To add other wake prefixes without changing the existing command syntax, keep `/` in the list as well.
 
 > [!TIP]
 > If the awakened session is not in the ID whitelist, AstrBot will not respond.
