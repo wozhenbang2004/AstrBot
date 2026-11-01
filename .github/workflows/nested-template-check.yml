@@ -1,0 +1,264 @@
+name: Nested template list regression
+on:
+  push:
+    branches: [validate/10890-nested-template-lists]
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      ASTR_PLAYWRIGHT_MODULE: ${{ runner.temp }}/nested-browser/node_modules/playwright/index.mjs
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          version: 10.28.2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.13.0
+          cache: pnpm
+          cache-dependency-path: dashboard/pnpm-lock.yaml
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: "3.12"
+      - name: Build dashboard and run existing frontend tests
+        working-directory: dashboard
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run i18n:check
+          pnpm run build
+          node --test tests/*.test.mjs
+      - name: Prepare browser regression fixture
+        run: |
+          mkdir -p dashboard/nested-fixture validation-artifacts
+          cat > dashboard/nested-fixture/index.html <<'NESTED_FIXTURE_1'
+          <!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body><div id="app"></div><script type="module" src="./main.js"></script></body></html>
+          NESTED_FIXTURE_1
+          cat > dashboard/nested-fixture/App.vue <<'NESTED_FIXTURE_2'
+          <script setup>
+          import { ref } from 'vue'
+          import TemplateListEditor from '../src/components/shared/TemplateListEditor.vue'
+          import schema from './schema.json'
+          const pluginI18n = {"en-US":{"config":{"groups":{"templates":{"group":{"children":{"templates":{"child":{"value":{"description":"Translated child value"},"details":{"tasks":{"templates":{"task":{"value":{"description":"Translated task value"}}}}}}}}}}}}}}
+          const saved = localStorage.getItem('nested-template-fixture')
+          const value = ref(saved ? JSON.parse(saved) : {groups: [{__template_key: 'group', label: 'First group', children: []}, {__template_key: 'group', label: 'Second group', children: []}]})
+          function save() { localStorage.setItem('nested-template-fixture', JSON.stringify(value.value)) }
+          </script>
+          <template>
+            <v-app><v-main><main style="max-width: 1100px; margin: auto; padding: 12px;">
+              <h1>Nested template editor regression fixture</h1>
+              <p>Synthetic plugin configuration. Uses the repository's actual editor and theme.</p>
+              <TemplateListEditor v-model="value.groups" :templates="schema.groups.templates" plugin-name="nested-fixture" :plugin-i18n="pluginI18n" config-path="groups" />
+              <button id="save-fixture" @click="save">Save fixture</button>
+              <pre id="serialized" style="white-space: pre-wrap; overflow-wrap: anywhere;">{{ JSON.stringify(value) }}</pre>
+            </main></v-main></v-app>
+          </template>
+          
+          NESTED_FIXTURE_2
+          cat > dashboard/nested-fixture/main.js <<'NESTED_FIXTURE_3'
+          import { createApp } from 'vue';
+          import { createPinia } from 'pinia';
+          import vuetify from '../src/plugins/vuetify';
+          import { initI18n } from '../src/i18n/composables';
+          import App from './App.vue';
+          import 'vuetify/styles';
+          await initI18n('en-US');
+          createApp(App).use(createPinia()).use(vuetify).mount('#app');
+          
+          NESTED_FIXTURE_3
+          cat > dashboard/nested-fixture/schema.json <<'NESTED_FIXTURE_4'
+          {
+            "groups": {
+              "type": "template_list",
+              "default": [],
+              "templates": {
+                "group": {
+                  "name": "Group",
+                  "display_item": "label",
+                  "items": {
+                    "label": {
+                      "type": "string",
+                      "description": "Group label",
+                      "default": ""
+                    },
+                    "children": {
+                      "type": "template_list",
+                      "description": "Children",
+                      "default": [],
+                      "templates": {
+                        "child": {
+                          "name": "Child",
+                          "display_item": "value",
+                          "items": {
+                            "value": {
+                              "type": "string",
+                              "description": "Child value",
+                              "default": ""
+                            },
+                            "details": {
+                              "type": "object",
+                              "description": "Details",
+                              "items": {
+                                "tasks": {
+                                  "type": "template_list",
+                                  "description": "Tasks",
+                                  "default": [],
+                                  "templates": {
+                                    "task": {
+                                      "name": "Task",
+                                      "display_item": "value",
+                                      "items": {
+                                        "value": {
+                                          "type": "string",
+                                          "description": "Task value",
+                                          "default": ""
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+          NESTED_FIXTURE_4
+          cat > dashboard/nested-fixture/check.mjs <<'NESTED_FIXTURE_5'
+          import assert from 'node:assert/strict';
+          import { mkdir, writeFile } from 'node:fs/promises';
+          const { chromium } = await import(process.env.ASTR_PLAYWRIGHT_MODULE);
+          const browser = await chromium.launch({headless: true});
+          const mode = process.argv[2];
+          await mkdir('../validation-artifacts', {recursive: true});
+          try {
+            for (const [name, viewport] of [['desktop', {width: 1280, height: 1000}], ['mobile', {width: 390, height: 844}]]) {
+              const context = await browser.newContext({viewport});
+              const page = await context.newPage();
+              const errors = [];
+              page.on('pageerror', e => errors.push(e.message));
+              await page.goto('http://127.0.0.1:5173/nested-fixture/index.html');
+              await page.waitForSelector('.template-list-editor');
+              const root = page.locator('.template-list-editor').first();
+              const roots = root.locator(':scope > .v-card');
+              assert.equal(await roots.count(), 2);
+              await roots.first().locator(':scope > .entry-header').click();
+              const children = roots.first().locator('.template-list-editor').first();
+              if (await children.count() !== 1) {
+                await page.screenshot({path: '../validation-artifacts/before.jpg', fullPage: true});
+                throw new Error('Nested template editor is missing');
+              }
+              await children.locator(':scope > .top-bar button').click();
+              await page.getByText('Child', {exact: true}).last().click();
+              const childCards = children.locator(':scope > .v-card');
+              const firstChild = childCards.first();
+              await firstChild.locator('input').first().fill('Child one');
+              assert.match(await firstChild.innerText(), /Translated child value/);
+              const tasks = firstChild.locator('.template-list-editor').first();
+              await tasks.locator(':scope > .top-bar button').click();
+              await page.getByText('Task', {exact: true}).last().click();
+              const taskCard = tasks.locator(':scope > .v-card').first();
+              await taskCard.locator('input').fill('Task one');
+              assert.match(await taskCard.innerText(), /Translated task value/);
+              const inputBox = await taskCard.locator('input').boundingBox();
+              assert.ok(inputBox && inputBox.width > 100, 'Nested leaf input remains usable');
+              await children.locator(':scope > .top-bar button').click();
+              await page.getByText('Child', {exact: true}).last().click();
+              await childCards.last().locator('input').first().fill('Child two');
+              let payload = JSON.parse(await page.locator('#serialized').innerText());
+              assert.equal(payload.groups[0].children[0].value, 'Child one');
+              assert.equal(payload.groups[0].children[1].value, 'Child two');
+              assert.deepEqual(payload.groups[0].children[1].details.tasks, []);
+              assert.deepEqual(payload.groups[1].children, []);
+              await childCards.last().locator(':scope > .entry-header button').last().click();
+              await page.locator('#save-fixture').click();
+              const expected = JSON.parse(await page.locator('#serialized').innerText());
+              assert.deepEqual(expected.groups[0].children, [{__template_key: 'child', value: 'Child one', details: {tasks: [{__template_key: 'task', value: 'Task one'}]}}]);
+              await page.reload();
+              await page.waitForSelector('.template-list-editor');
+              payload = JSON.parse(await page.locator('#serialized').innerText());
+              assert.deepEqual(payload, expected);
+              await page.locator('.template-list-editor').first().locator(':scope > .v-card').first().locator(':scope > .entry-header').click();
+              const reopenedChild = page.locator('.template-list-editor').first().locator(':scope > .v-card').first().locator('.template-list-editor').first().locator(':scope > .v-card').first();
+              await reopenedChild.locator(':scope > .entry-header').click();
+              const reopenedTask = reopenedChild.locator('.template-list-editor').first().locator(':scope > .v-card').first();
+              await reopenedTask.locator(':scope > .entry-header').click();
+              assert.equal(await reopenedTask.locator('input').inputValue(), 'Task one');
+              assert.deepEqual(errors, []);
+              await page.screenshot({path: '../validation-artifacts/' + mode + '-' + name + '.jpg', fullPage: true});
+              await writeFile('../validation-artifacts/config-' + name + '.json', JSON.stringify(payload));
+              console.log(name + ': add, edit, nested object, delete, sibling isolation, i18n and reload passed');
+              await context.close();
+            }
+          } finally { await browser.close(); }
+          
+          NESTED_FIXTURE_5
+          
+      - name: Install browser test runner
+        run: |
+          npm install --prefix "$RUNNER_TEMP/nested-browser" playwright@1.56.1 --ignore-scripts
+          node "$RUNNER_TEMP/nested-browser/node_modules/playwright/cli.js" install --with-deps chromium
+          python -m pip install uv
+      - name: Verify baseline failure and fixed desktop and mobile interactions
+        run: |
+          git show 528529eb5d28107c97b99f81c5251ff4ba4a745c^:dashboard/src/components/shared/TemplateListEditor.vue > dashboard/src/components/shared/TemplateListEditor.vue
+          cd dashboard
+          pnpm exec vite --host 127.0.0.1 --port 5173 > ../validation-artifacts/vite.log 2>&1 &
+          fixture_vite_pid=$!
+          trap 'kill "$fixture_vite_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --silent --fail http://127.0.0.1:5173/nested-fixture/index.html > /dev/null; then break; fi
+            sleep 1
+          done
+          if node nested-fixture/check.mjs before > ../validation-artifacts/before.log 2>&1; then
+            cat ../validation-artifacts/before.log
+            echo 'Expected the baseline to fail the nested editor regression.'
+            exit 1
+          fi
+          cat ../validation-artifacts/before.log
+          grep -F 'Nested template editor is missing' ../validation-artifacts/before.log
+          git show c722e67c1b7dbf94f7ae2a558e29970f198fd649:dashboard/src/components/shared/TemplateListEditor.vue > src/components/shared/TemplateListEditor.vue
+          node nested-fixture/check.mjs fixed | tee ../validation-artifacts/fixed.log
+          
+      - name: Validate browser payloads and Python style
+        run: |
+          uv sync --group dev
+          uv run pytest tests/unit/test_dashboard_util.py -q
+          uv run python - <<'PY'
+          import json
+          from pathlib import Path
+          from astrbot.dashboard.services.config_service import get_schema_item, validate_config
+          schema = json.loads(Path("dashboard/nested-fixture/schema.json").read_text())
+          for result in Path("validation-artifacts").glob("config-*.json"):
+              payload = json.loads(result.read_text())
+              errors, normalized = validate_config(payload, schema, False)
+              assert not errors, errors
+              assert normalized == payload
+              assert get_schema_item(schema, "groups.templates.group.children.templates.child.details.tasks.templates.task.value")["type"] == "string"
+              print(f"{result.name}: browser-produced nested payload accepted by backend validation")
+          PY
+          uvx --from ruff==0.15.22 ruff format --check .
+          uvx --from ruff==0.15.22 ruff check .
+          
+      - name: Build documentation
+        working-directory: docs
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run docs:build
+      - name: Preserve screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nested-template-validation
+          path: validation-artifacts
+          if-no-files-found: error
