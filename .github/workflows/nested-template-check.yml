@@ -8,8 +8,6 @@ jobs:
   regression:
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    env:
-      ASTR_PLAYWRIGHT_MODULE: ${{ runner.temp }}/nested-browser/node_modules/playwright/index.mjs
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -137,7 +135,7 @@ jobs:
           cat > dashboard/nested-fixture/check.mjs <<'NESTED_FIXTURE_5'
           import assert from 'node:assert/strict';
           import { mkdir, writeFile } from 'node:fs/promises';
-          const { chromium } = await import(process.env.ASTR_PLAYWRIGHT_MODULE);
+          const { chromium } = await import(process.env.RUNNER_TEMP + '/nested-browser/node_modules/playwright/index.mjs');
           const browser = await chromium.launch({headless: true});
           const mode = process.argv[2];
           await mkdir('../validation-artifacts', {recursive: true});
